@@ -1,4 +1,5 @@
-/*	$OpenBSD: extern.h,v 1.28 2004/03/30 16:14:22 millert Exp $	*/
+/**	$MirOS: src/bin/pax/extern.h,v 1.2 2005/11/16 13:58:39 tg Exp $ */
+/*	$OpenBSD: extern.h,v 1.31 2005/04/28 06:58:07 otto Exp $	*/
 /*	$NetBSD: extern.h,v 1.5 1996/03/26 23:54:16 mrg Exp $	*/
 
 /*-
@@ -126,6 +127,8 @@ int crc_strd(void);
 int vcpio_rd(ARCHD *, char *);
 off_t vcpio_endrd(void);
 int crc_stwr(void);
+int v4root_stwr(void);
+int v4norm_stwr(void);
 int vcpio_wr(ARCHD *);
 int bcpio_id(char *, int);
 int bcpio_rd(ARCHD *, char *);
@@ -145,9 +148,12 @@ int node_creat(ARCHD *);
 int unlnk_exist(char *, int);
 int chk_path(char *, uid_t, gid_t);
 void set_ftime(char *fnm, time_t mtime, time_t atime, int frc);
+void fset_ftime(char *fnm, int, time_t mtime, time_t atime, int frc);
 int set_ids(char *, uid_t, gid_t);
+int fset_ids(char *, int, uid_t, gid_t);
 int set_lids(char *, uid_t, gid_t);
 void set_pmode(char *, mode_t);
+void fset_pmode(char *, int, mode_t);
 int file_write(int, char *, int, int *, int *, int, char *);
 void file_flush(int, char *, int);
 void rdfile_close(ARCHD *, int *);
@@ -174,6 +180,7 @@ int ul_asc(u_long, char *, int, int);
 u_quad_t asc_uqd(char *, int, int);
 int uqd_asc(u_quad_t, char *, int, int);
 #endif
+size_t fieldcpy(char *, size_t, const char *, size_t);
 
 /*
  * getoldopt.c
@@ -271,9 +278,11 @@ void atdir_end(void);
 void add_atdir(char *, dev_t, ino_t, time_t, time_t);
 int get_atdir(dev_t, ino_t, time_t *, time_t *);
 int dir_start(void);
-void add_dir(char *, int, struct stat *, int);
+void add_dir(char *, struct stat *, int);
 void proc_dir(void);
 u_int st_hash(char *, int, int);
+int flnk_start(void);
+int chk_flnk(ARCHD *);
 
 /*
  * tar.c

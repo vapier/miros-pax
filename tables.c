@@ -1,7 +1,9 @@
-/*	$OpenBSD: tables.c,v 1.21 2003/08/16 17:31:55 deraadt Exp $	*/
+/**	$MirOS: src/bin/pax/tables.c,v 1.2 2005/11/16 13:58:39 tg Exp $ */
+/*	$OpenBSD: tables.c,v 1.23 2005/04/21 21:47:18 beck Exp $	*/
 /*	$NetBSD: tables.c,v 1.4 1995/03/21 09:07:45 cgd Exp $	*/
 
 /*-
+ * Copyright (c) 2005 Thorsten Glaser <tg@66h.42h.de>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -34,18 +36,9 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static const char sccsid[] = "@(#)tables.c	8.1 (Berkeley) 5/31/93";
-#else
-static const char rcsid[] = "$OpenBSD: tables.c,v 1.21 2003/08/16 17:31:55 deraadt Exp $";
-#endif
-#endif /* not lint */
-
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <sys/fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,6 +48,9 @@ static const char rcsid[] = "$OpenBSD: tables.c,v 1.21 2003/08/16 17:31:55 deraa
 #include "pax.h"
 #include "tables.h"
 #include "extern.h"
+
+__SCCSID("@(#)tables.c	8.1 (Berkeley) 5/31/93");
+__RCSID("$MirOS: src/bin/pax/tables.c,v 1.2 2005/11/16 13:58:39 tg Exp $");
 
 /*
  * Routines for controlling the contents of all the different databases pax
@@ -72,12 +68,14 @@ static const char rcsid[] = "$OpenBSD: tables.c,v 1.21 2003/08/16 17:31:55 deraa
  */
 
 static HRDLNK **ltab = NULL;	/* hard link table for detecting hard links */
+static HRDFLNK **fltab = NULL;	/* hard link table for anonymisation */
 static FTM **ftab = NULL;	/* file time table for updating arch */
 static NAMT **ntab = NULL;	/* interactive rename storage table */
 static DEVT **dtab = NULL;	/* device/inode mapping tables */
 static ATDIR **atab = NULL;	/* file tree directory time reset table */
-static int dirfd = -1;		/* storage for setting created dir time/mode */
-static u_long dircnt;		/* entries in dir time/mode storage */
+static DIRDATA *dirp = NULL;	/* storage for setting created dir time/mode */
+static size_t dirsize;		/* size of dirp table */
+static long dircnt = 0;		/* entries in dir time/mode storage */
 static int ffd = -1;		/* tmp file for file time table name storage */
 
 static DEVT *chk_dev(dev_t, int);
@@ -170,6 +168,9 @@ chk_lnk(ARCHD *arcn)
 			 */
 			arcn->ln_nlen = strlcpy(arcn->ln_name, pt->name,
 				sizeof(arcn->ln_name));
+			/* XXX truncate? */
+			if (arcn->nlen >= sizeof(arcn->name))
+				arcn->nlen = sizeof(arcn->name) - 1;
 			if (arcn->type == PAX_REG)
 				arcn->type = PAX_HRG;
 			else
@@ -313,7 +314,7 @@ lnk_end(void)
  * hash table is indexed by hashing the file path. The nodes in the table store
  * the length of the filename and the lseek offset within the scratch file
  * where the actual name is stored. Since there are never any deletions from
- * this table, fragmentation of the scratch file is never a issue. Lookups 
+ * this table, fragmentation of the scratch file is never a issue. Lookups
  * seem to not exhibit any locality at all (files in the database are rarely
  * looked up more than once...), so caching is just a waste of memory. The
  * only limitation is the amount of scratch file space available to store the
@@ -600,6 +601,8 @@ sub_name(char *oname, int *onamelen, size_t onamesize)
 			 * and return (we know that oname has enough space)
 			 */
 			*onamelen = strlcpy(oname, pt->nname, onamesize);
+			if (*onamelen >= onamesize)
+				*onamelen = onamesize - 1; /* XXX truncate? */
 			return;
 		}
 		pt = pt->fow;
@@ -1092,21 +1095,15 @@ get_atdir(dev_t dev, ino_t ino, time_t *mtime, time_t *atime)
 int
 dir_start(void)
 {
-
-	if (dirfd != -1)
+	if (dirp != NULL)
 		return(0);
 
-	/*
-	 * unlink the file so it goes away at termination by itself
-	 */
-	memcpy(tempbase, _TFILE_BASE, sizeof(_TFILE_BASE));
-	if ((dirfd = mkstemp(tempfile)) >= 0) {
-		(void)unlink(tempfile);
-		return(0);
+	dirsize = DIRP_SIZE;
+	if ((dirp = malloc(dirsize * sizeof(DIRDATA))) == NULL) {
+		paxwarn(1, "Unable to allocate memory for directory times");
+		return(-1);
 	}
-	paxwarn(1, "Unable to create temporary file for directory times: %s",
-	    tempfile);
-	return(-1);
+	return(0);
 }
 
 /*
@@ -1123,38 +1120,34 @@ dir_start(void)
  */
 
 void
-add_dir(char *name, int nlen, struct stat *psb, int frc_mode)
+add_dir(char *name, struct stat *psb, int frc_mode)
 {
-	DIRDATA dblk;
+	DIRDATA *dblk;
 
-	if (dirfd < 0)
+	if (dirp == NULL)
 		return;
 
-	/*
-	 * get current position (where file name will start) so we can store it
-	 * in the trailer
-	 */
-	if ((dblk.npos = lseek(dirfd, 0L, SEEK_CUR)) < 0) {
-		paxwarn(1,"Unable to store mode and times for directory: %s",name);
+	if (dircnt == dirsize) {
+		dblk = realloc(dirp, 2 * dirsize * sizeof(DIRDATA));
+		if (dblk == NULL) {
+			paxwarn(1, "Unable to store mode and times for created"
+			    " directory: %s", name);
+			return;
+		}
+		dirp = dblk;
+		dirsize *= 2;
+	}
+	dblk = &dirp[dircnt];
+	if ((dblk->name = strdup(name)) == NULL) {
+		paxwarn(1, "Unable to store mode and times for created"
+		    " directory: %s", name);
 		return;
 	}
-
-	/*
-	 * write the file name followed by the trailer
-	 */
-	dblk.nlen = nlen + 1;
-	dblk.mode = psb->st_mode & 0xffff;
-	dblk.mtime = psb->st_mtime;
-	dblk.atime = psb->st_atime;
-	dblk.frc_mode = frc_mode;
-	if ((write(dirfd, name, dblk.nlen) == dblk.nlen) &&
-	    (write(dirfd, (char *)&dblk, sizeof(dblk)) == sizeof(dblk))) {
-		++dircnt;
-		return;
-	}
-
-	paxwarn(1,"Unable to store mode and times for created directory: %s",name);
-	return;
+	dblk->mode = psb->st_mode & 0xffff;
+	dblk->mtime = psb->st_mtime;
+	dblk->atime = psb->st_atime;
+	dblk->frc_mode = frc_mode;
+	++dircnt;
 }
 
 /*
@@ -1166,46 +1159,31 @@ add_dir(char *name, int nlen, struct stat *psb, int frc_mode)
 void
 proc_dir(void)
 {
-	char name[PAXPATHLEN+1];
-	DIRDATA dblk;
-	u_long cnt;
+	DIRDATA *dblk;
+	long cnt;
 
-	if (dirfd < 0)
+	if (dirp == NULL)
 		return;
 	/*
 	 * read backwards through the file and process each directory
 	 */
-	for (cnt = 0; cnt < dircnt; ++cnt) {
-		/*
-		 * read the trailer, then the file name, if this fails
-		 * just give up.
-		 */
-		if (lseek(dirfd, -((off_t)sizeof(dblk)), SEEK_CUR) < 0)
-			break;
-		if (read(dirfd,(char *)&dblk, sizeof(dblk)) != sizeof(dblk))
-			break;
-		if (lseek(dirfd, dblk.npos, SEEK_SET) < 0)
-			break;
-		if (read(dirfd, name, dblk.nlen) != dblk.nlen)
-			break;
-		if (lseek(dirfd, dblk.npos, SEEK_SET) < 0)
-			break;
-
+	cnt = dircnt;
+	while (--cnt >= 0) {
 		/*
 		 * frc_mode set, make sure we set the file modes even if
 		 * the user didn't ask for it (see file_subs.c for more info)
 		 */
-		if (pmode || dblk.frc_mode)
-			set_pmode(name, dblk.mode);
+		dblk = &dirp[cnt];
+		if (pmode || dblk->frc_mode)
+			set_pmode(dblk->name, dblk->mode);
 		if (patime || pmtime)
-			set_ftime(name, dblk.mtime, dblk.atime, 0);
+			set_ftime(dblk->name, dblk->mtime, dblk->atime, 0);
+		free(dblk->name);
 	}
 
-	(void)close(dirfd);
-	dirfd = -1;
-	if (cnt != dircnt)
-		paxwarn(1,"Unable to set mode and times for created directories");
-	return;
+	free(dirp);
+	dirp = NULL;
+	dircnt = 0;
 }
 
 /*
@@ -1285,4 +1263,103 @@ st_hash(char *name, int len, int tabsz)
 	 * return the result mod the table size
 	 */
 	return(key % tabsz);
+}
+
+/* Forward hard link anonymisation routines */
+
+/*
+ * flnk_start
+ *	Creates the hard link table.
+ * Return:
+ *	0 if created, -1 if failure
+ */
+
+int
+flnk_start(void)
+{
+	if (fltab != NULL)
+		return (0);
+ 	if ((fltab = (HRDFLNK **)calloc(L_TAB_SZ, sizeof(HRDFLNK *))) == NULL) {
+		paxwarn(1, "Cannot allocate memory for hard link table");
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * chk_flnk()
+ *	Looks up entry in hard link hash table. If found, it copies the name
+ *	of the file it is linked to (we already saw that file) into ln_name.
+ *	lnkcnt is decremented and if goes to 1 the node is deleted from the
+ *	database. (We have seen all the links to this file). If not found,
+ *	we add the file to the database if it has the potential for having
+ *	hard links to other files we may process (it has a link count > 1)
+ * Return:
+ *	if found returns the new inode number; -1 on error
+ */
+
+int
+chk_flnk(ARCHD *arcn)
+{
+	HRDFLNK *pt;
+	HRDFLNK **ppt;
+	u_int indx;
+	static ino_t running = 3;
+
+	if (fltab == NULL)
+		return (-1);
+	/*
+	 * ignore those nodes that cannot have hard links
+	 */
+	if ((arcn->type == PAX_DIR) || (arcn->sb.st_nlink <= 1))
+		return (running++);
+
+	/*
+	 * hash inode number and look for this file
+	 */
+	indx = ((unsigned)arcn->sb.st_ino) % L_TAB_SZ;
+	if ((pt = fltab[indx]) != NULL) {
+		/*
+		 * it's hash chain in not empty, walk down looking for it
+		 */
+		ppt = &(fltab[indx]);
+		while (pt != NULL) {
+			if ((pt->ino == arcn->sb.st_ino) &&
+			    (pt->dev == arcn->sb.st_dev))
+				break;
+			ppt = &(pt->fow);
+			pt = pt->fow;
+		}
+
+		if (pt != NULL) {
+			/* found a link */
+			ino_t rv = pt->newi;
+			/*
+			 * if we have found all the links to this file, remove
+			 * it from the database
+			 */
+			if (--pt->nlink <= 1) {
+				*ppt = pt->fow;
+				(void)free((char *)pt);
+			}
+			return (rv);
+		}
+	}
+
+	/*
+	 * we never saw this file before. It has links so we add it to the
+	 * front of this hash chain
+	 */
+	if ((pt = (HRDFLNK *)malloc(sizeof(HRDFLNK))) != NULL) {
+		pt->dev = arcn->sb.st_dev;
+		pt->ino = arcn->sb.st_ino;
+		pt->nlink = arcn->sb.st_nlink;
+		pt->fow = fltab[indx];
+		pt->newi = running++;
+		fltab[indx] = pt;
+		return (pt->newi);
+	}
+
+	paxwarn(1, "Hard link table out of memory");
+	return (-1);
 }
