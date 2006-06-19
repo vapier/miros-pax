@@ -1,7 +1,9 @@
-/*	$OpenBSD: tar.c,v 1.34 2004/10/23 19:34:14 otto Exp $	*/
+/**	$MirOS: src/bin/pax/tar.c,v 1.2 2006/06/19 20:31:06 tg Exp $ */
+/*	$OpenBSD: tar.c,v 1.39 2005/06/13 19:20:05 otto Exp $	*/
 /*	$NetBSD: tar.c,v 1.5 1995/03/21 09:07:49 cgd Exp $	*/
 
 /*-
+ * Copyright (c) 2006 Thorsten Glaser.
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -38,7 +40,7 @@
 #if 0
 static const char sccsid[] = "@(#)tar.c	8.2 (Berkeley) 4/18/94";
 #else
-static const char rcsid[] = "$OpenBSD: tar.c,v 1.34 2004/10/23 19:34:14 otto Exp $";
+static const char rcsid[] = "$OpenBSD: tar.c,v 1.39 2005/06/13 19:20:05 otto Exp $";
 #endif
 #endif /* not lint */
 
@@ -53,18 +55,21 @@ static const char rcsid[] = "$OpenBSD: tar.c,v 1.34 2004/10/23 19:34:14 otto Exp
 #include "pax.h"
 #include "extern.h"
 #include "tar.h"
+#include "options.h"
 
 /*
  * Routines for reading, writing and header identify of various versions of tar
  */
 
-static size_t expandname(char *, size_t, char **, const char *);
+static size_t expandname(char *, size_t, char **, const char *, size_t);
 static u_long tar_chksm(char *, int);
 static char *name_split(char *, int);
 static int ul_oct(u_long, char *, int, int);
 #ifndef LONG_OFF_T
 static int uqd_oct(u_quad_t, char *, int, int);
 #endif
+
+static void tar_dbgfld(const char *, const char *, size_t);
 
 static uid_t uid_nobody;
 static uid_t uid_warn;
@@ -402,9 +407,9 @@ tar_rd(ARCHD *arcn, char *buf)
 	hd = (HD_TAR *)buf;
 	if (hd->linkflag != LONGLINKTYPE && hd->linkflag != LONGNAMETYPE) {
 		arcn->nlen = expandname(arcn->name, sizeof(arcn->name),
-		    &gnu_name_string, hd->name);
+		    &gnu_name_string, hd->name, sizeof(hd->name));
 		arcn->ln_nlen = expandname(arcn->ln_name, sizeof(arcn->ln_name),
-		    &gnu_link_string, hd->linkname);
+		    &gnu_link_string, hd->linkname, sizeof(hd->linkname));
 	}
 	arcn->sb.st_mode = (mode_t)(asc_ul(hd->mode,sizeof(hd->mode),OCT) &
 	    0xfff);
@@ -553,7 +558,8 @@ tar_wr(ARCHD *arcn)
 	case PAX_HLK:
 	case PAX_HRG:
 		if (arcn->ln_nlen > sizeof(hd->linkname)) {
-			paxwarn(1,"Link name too long for tar %s", arcn->ln_name);
+			paxwarn(1, "Link name too long for tar %s",
+			    arcn->ln_name);
 			return(1);
 		}
 		break;
@@ -569,7 +575,7 @@ tar_wr(ARCHD *arcn)
 	len = arcn->nlen;
 	if (arcn->type == PAX_DIR)
 		++len;
-	if (len >= sizeof(hd->name)) {
+	if (len > sizeof(hd->name)) {
 		paxwarn(1, "File name too long for tar %s", arcn->name);
 		return(1);
 	}
@@ -584,7 +590,7 @@ tar_wr(ARCHD *arcn)
 	 */
 	memset(hdblk, 0, sizeof(hdblk));
 	hd = (HD_TAR *)hdblk;
-	strlcpy(hd->name, arcn->name, sizeof(hd->name));
+	fieldcpy(hd->name, sizeof(hd->name), arcn->name, sizeof(arcn->name));
 	arcn->pad = 0;
 
 	if (arcn->type == PAX_DIR) {
@@ -602,7 +608,8 @@ tar_wr(ARCHD *arcn)
 		 * no data follows this file, so no pad
 		 */
 		hd->linkflag = SYMTYPE;
-		strlcpy(hd->linkname, arcn->ln_name, sizeof(hd->linkname));
+		fieldcpy(hd->linkname, sizeof(hd->linkname), arcn->ln_name,
+		    sizeof(arcn->ln_name));
 		if (ul_oct((u_long)0L, hd->size, sizeof(hd->size), 1))
 			goto out;
 	} else if ((arcn->type == PAX_HLK) || (arcn->type == PAX_HRG)) {
@@ -610,7 +617,8 @@ tar_wr(ARCHD *arcn)
 		 * no data follows this file, so no pad
 		 */
 		hd->linkflag = LNKTYPE;
-		strlcpy(hd->linkname, arcn->ln_name, sizeof(hd->linkname));
+		fieldcpy(hd->linkname, sizeof(hd->linkname), arcn->ln_name,
+		    sizeof(arcn->ln_name));
 		if (ul_oct((u_long)0L, hd->size, sizeof(hd->size), 1))
 			goto out;
 	} else {
@@ -721,7 +729,7 @@ ustar_id(char *blk, int size)
 	 * programs are fouled up and create archives missing the \0. Last we
 	 * check the checksum. If ok we have to assume it is a valid header.
 	 */
-	if (hd->name[0] == '\0')
+	if (hd->prefix[0] == '\0' && hd->name[0] == '\0')
 		return(-1);
 	if (strncmp(hd->magic, TMAGIC, TMAGLEN - 1) != 0)
 		return(-1);
@@ -763,7 +771,8 @@ ustar_rd(ARCHD *arcn, char *buf)
 	 */
 	dest = arcn->name;
 	if (*(hd->prefix) != '\0') {
-		cnt = strlcpy(dest, hd->prefix, sizeof(arcn->name) - 1);
+		cnt = fieldcpy(dest, sizeof(arcn->name) - 1, hd->prefix,
+		    sizeof(hd->prefix));
 		dest += cnt;
 		*dest++ = '/';
 		cnt++;
@@ -772,10 +781,10 @@ ustar_rd(ARCHD *arcn, char *buf)
 	}
 
 	if (hd->typeflag != LONGLINKTYPE && hd->typeflag != LONGNAMETYPE) {
-		arcn->nlen = expandname(dest, sizeof(arcn->name) - cnt,
-		    &gnu_name_string, hd->name);
+		arcn->nlen = cnt + expandname(dest, sizeof(arcn->name) - cnt,
+		    &gnu_name_string, hd->name, sizeof(hd->name));
 		arcn->ln_nlen = expandname(arcn->ln_name, sizeof(arcn->ln_name),
-		    &gnu_link_string, hd->linkname);
+		    &gnu_link_string, hd->linkname, sizeof(hd->linkname));
 	}
 
 	/*
@@ -910,6 +919,10 @@ ustar_wr(ARCHD *arcn)
 	char *pt;
 	char hdblk[sizeof(HD_USTAR)];
 
+	u_long t_uid, t_gid, t_mtime;
+
+	anonarch_init();
+
 	/*
 	 * check for those file system types ustar cannot store
 	 */
@@ -952,7 +965,8 @@ ustar_wr(ARCHD *arcn)
 		 * occur, we remove the / and copy the first part to the prefix
 		 */
 		*pt = '\0';
-		strlcpy(hd->prefix, arcn->name, sizeof(hd->prefix));
+		fieldcpy(hd->prefix, sizeof(hd->prefix), arcn->name,
+		    sizeof(arcn->name));
 		*pt++ = '/';
 	}
 
@@ -960,7 +974,12 @@ ustar_wr(ARCHD *arcn)
 	 * copy the name part. this may be the whole path or the part after
 	 * the prefix
 	 */
-	strlcpy(hd->name, pt, sizeof(hd->name));
+	fieldcpy(hd->name, sizeof(hd->name), pt,
+	    sizeof(arcn->name) - (pt - arcn->name));
+
+	t_uid   = (anonarch & ANON_UIDGID) ? 0UL : (u_long)arcn->sb.st_uid;
+	t_gid   = (anonarch & ANON_UIDGID) ? 0UL : (u_long)arcn->sb.st_gid;
+	t_mtime = (anonarch & ANON_MTIME) ? 0UL : (u_long)arcn->sb.st_mtime;
 
 	/*
 	 * set the fields in the header that are type dependent
@@ -996,7 +1015,8 @@ ustar_wr(ARCHD *arcn)
 			hd->typeflag = SYMTYPE;
 		else
 			hd->typeflag = LNKTYPE;
-		strlcpy(hd->linkname, arcn->ln_name, sizeof(hd->linkname));
+		fieldcpy(hd->linkname, sizeof(hd->linkname), arcn->ln_name,
+		    sizeof(arcn->ln_name));
 		if (ul_oct((u_long)0L, hd->size, sizeof(hd->size), 3))
 			goto out;
 		break;
@@ -1031,39 +1051,39 @@ ustar_wr(ARCHD *arcn)
 	 * set the remaining fields. Some versions want all 16 bits of mode
 	 * we better humor them (they really do not meet spec though)....
 	 */
-	if (ul_oct((u_long)arcn->sb.st_uid, hd->uid, sizeof(hd->uid), 3)) {
+	if (ul_oct(t_uid, hd->uid, sizeof(hd->uid), 3)) {
 		if (uid_nobody == 0) {
 			if (uid_name("nobody", &uid_nobody) == -1)
 				goto out;
 		}
-		if (uid_warn != arcn->sb.st_uid) {
-			uid_warn = arcn->sb.st_uid;
+		if (uid_warn != t_uid) {
+			uid_warn = t_uid;
 			paxwarn(1,
 			    "Ustar header field is too small for uid %lu, "
-			    "using nobody", (u_long)arcn->sb.st_uid);
+			    "using nobody", t_uid);
 		}
 		if (ul_oct((u_long)uid_nobody, hd->uid, sizeof(hd->uid), 3))
 			goto out;
 	}
-	if (ul_oct((u_long)arcn->sb.st_gid, hd->gid, sizeof(hd->gid), 3)) {
+	if (ul_oct(t_gid, hd->gid, sizeof(hd->gid), 3)) {
 		if (gid_nobody == 0) {
 			if (gid_name("nobody", &gid_nobody) == -1)
 				goto out;
 		}
-		if (gid_warn != arcn->sb.st_gid) {
-			gid_warn = arcn->sb.st_gid;
+		if (gid_warn != t_gid) {
+			gid_warn = t_gid;
 			paxwarn(1,
 			    "Ustar header field is too small for gid %lu, "
-			    "using nobody", (u_long)arcn->sb.st_gid);
+			    "using nobody", t_gid);
 		}
 		if (ul_oct((u_long)gid_nobody, hd->gid, sizeof(hd->gid), 3))
 			goto out;
 	}
 	if (ul_oct((u_long)arcn->sb.st_mode, hd->mode, sizeof(hd->mode), 3) ||
-	    ul_oct((u_long)arcn->sb.st_mtime,hd->mtime,sizeof(hd->mtime),3))
+	    ul_oct(t_mtime,hd->mtime,sizeof(hd->mtime),3))
 		goto out;
-	strncpy(hd->uname, name_uid(arcn->sb.st_uid, 0), sizeof(hd->uname));
-	strncpy(hd->gname, name_gid(arcn->sb.st_gid, 0), sizeof(hd->gname));
+	strncpy(hd->uname, name_uid(t_uid, 0), sizeof(hd->uname));
+	strncpy(hd->gname, name_gid(t_gid, 0), sizeof(hd->gname));
 
 	/*
 	 * calculate and store the checksum write the header to the archive
@@ -1073,6 +1093,28 @@ ustar_wr(ARCHD *arcn)
 	if (ul_oct(tar_chksm(hdblk, sizeof(HD_USTAR)), hd->chksum,
 	   sizeof(hd->chksum), 3))
 		goto out;
+
+	if (anonarch & ANON_DEBUG) {
+		tar_dbgfld(NULL, NULL, 0);
+		tar_dbgfld("writing name '", hd->name, TNMSZ);
+		tar_dbgfld("' mode ", hd->mode, 8);
+		tar_dbgfld(" uid ", hd->uid, 8);
+		tar_dbgfld(" (", hd->uname, 32);
+		tar_dbgfld(") gid ", hd->gid, 8);
+		tar_dbgfld(" (", hd->gname, 32);
+		tar_dbgfld(") size ", hd->size, 12);
+		tar_dbgfld(" mtime ", hd->mtime, 12);
+		tar_dbgfld(" type ", &(hd->typeflag), 1);
+		tar_dbgfld(" linked to '", hd->linkname, TNMSZ);
+		tar_dbgfld("' magic '", hd->magic, TMAGLEN);
+		tar_dbgfld("' v", hd->version, TVERSLEN);
+		tar_dbgfld(" device '", hd->devmajor, 8);
+		tar_dbgfld(":", hd->devminor, 8);
+		tar_dbgfld("' prefix '", hd->prefix, TPFSZ);
+		tar_dbgfld("' checksum ", hd->chksum, CHK_LEN);
+		tar_dbgfld(NULL, NULL, 1);
+	}
+
 	if (wr_rdbuf(hdblk, sizeof(HD_USTAR)) < 0)
 		return(-1);
 	if (wr_skip((off_t)(BLKMULT - sizeof(HD_USTAR))) < 0)
@@ -1149,18 +1191,54 @@ name_split(char *name, int len)
 }
 
 static size_t
-expandname(char *buf, size_t len, char **gnu_name, const char *name)
+expandname(char *buf, size_t len, char **gnu_name, const char *name,
+    size_t limit)
 {
 	size_t nlen;
 
 	if (*gnu_name) {
+		/* *gnu_name is NUL terminated */
 		if ((nlen = strlcpy(buf, *gnu_name, len)) >= len)
 			nlen = len - 1;
 		free(*gnu_name);
 		*gnu_name = NULL;
-	} else {
-		if ((nlen = strlcpy(buf, name, len)) >= len)
-			nlen = len - 1;
-	}
+	} else
+		nlen = fieldcpy(buf, len, name, limit);
 	return(nlen);
+}
+
+static void
+tar_dbgfld(const char *pfx, const char *sp, size_t len)
+{
+	static char fbuf[256];
+	char tbuf[256], *s;
+
+	if ((pfx == NULL) || (sp == NULL)) {
+		if ((pfx == NULL) && (sp == NULL)) {
+			if (len == 0) {
+				*fbuf = 0;
+			} else {
+				paxwarn(0, fbuf);
+			}
+		} else
+			paxwarn(0, "tar_dbgfld: wrong call");
+		return;
+	}
+
+	strlcat(fbuf, pfx, sizeof (fbuf));
+
+	if (len == 0)
+		return;
+
+	if (len > (sizeof (tbuf) - 1))
+		len = sizeof (tbuf) - 1;
+
+	memmove(s = tbuf, sp, len);
+	tbuf[len] = 0;
+	while (*s == ' ')
+		++s;
+	while (s[strlen(s) - 1] == ' ')
+		s[strlen(s) - 1] = 0;
+
+	strlcat(fbuf, tbuf, sizeof (fbuf));
 }
