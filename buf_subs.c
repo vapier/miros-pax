@@ -1,4 +1,4 @@
-/*	$OpenBSD: buf_subs.c,v 1.20 2004/04/16 22:50:23 deraadt Exp $	*/
+/*	$OpenBSD: buf_subs.c,v 1.21 2005/11/09 19:59:06 otto Exp $	*/
 /*	$NetBSD: buf_subs.c,v 1.5 1995/03/21 09:07:08 cgd Exp $	*/
 
 /*-
@@ -34,18 +34,9 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static const char sccsid[] = "@(#)buf_subs.c	8.2 (Berkeley) 4/18/94";
-#else
-static const char rcsid[] = "$OpenBSD: buf_subs.c,v 1.20 2004/04/16 22:50:23 deraadt Exp $";
-#endif
-#endif /* not lint */
-
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
@@ -53,6 +44,9 @@ static const char rcsid[] = "$OpenBSD: buf_subs.c,v 1.20 2004/04/16 22:50:23 der
 #include <string.h>
 #include "pax.h"
 #include "extern.h"
+
+__SCCSID("@(#)buf_subs.c	8.2 (Berkeley) 4/18/94");
+__RCSID("$MirOS: src/bin/pax/buf_subs.c,v 1.2 2007/02/17 04:52:40 tg Exp $");
 
 /*
  * routines which implement archive and file buffering
@@ -677,7 +671,7 @@ rd_wrfile(ARCHD *arcn, int ofd, off_t *left)
 	int rem;
 	int sz = MINFBSZ;
 	struct stat sb;
-	u_long crc = 0L;
+	u_int32_t crc = 0;
 
 	/*
 	 * pass the blocksize of the file being written to the write routine,

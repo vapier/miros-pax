@@ -1,4 +1,4 @@
-/*	$OpenBSD: pat_rep.c,v 1.28 2004/06/11 03:10:43 millert Exp $	*/
+/*	$OpenBSD: pat_rep.c,v 1.30 2005/08/05 08:30:10 djm Exp $	*/
 /*	$NetBSD: pat_rep.c,v 1.4 1995/03/21 09:07:33 cgd Exp $	*/
 
 /*-
@@ -34,18 +34,9 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static const char sccsid[] = "@(#)pat_rep.c	8.2 (Berkeley) 4/18/94";
-#else
-static const char rcsid[] = "$OpenBSD: pat_rep.c,v 1.28 2004/06/11 03:10:43 millert Exp $";
-#endif
-#endif /* not lint */
-
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -55,6 +46,9 @@ static const char rcsid[] = "$OpenBSD: pat_rep.c,v 1.28 2004/06/11 03:10:43 mill
 #include "pax.h"
 #include "pat_rep.h"
 #include "extern.h"
+
+__SCCSID("@(#)pat_rep.c	8.2 (Berkeley) 4/18/94");
+__RCSID("$MirOS: src/bin/pax/pat_rep.c,v 1.2 2007/02/17 04:52:41 tg Exp $");
 
 /*
  * routines to handle pattern matching, name modification (regular expression
@@ -217,7 +211,7 @@ rep_add(char *str)
  */
 
 int
-pat_add(char *str, char *chdname)
+pat_add(char *str, char *chd_name)
 {
 	PATTERN *pt;
 
@@ -244,7 +238,7 @@ pat_add(char *str, char *chdname)
 	pt->plen = strlen(str);
 	pt->fow = NULL;
 	pt->flgs = 0;
-	pt->chdname = chdname;
+	pt->chdname = chd_name;
 
 	if (pathead == NULL) {
 		pattail = pathead = pt;
@@ -614,7 +608,7 @@ mod_name(ARCHD *arcn)
 	 * Strip off leading '/' if appropriate.
 	 * Currently, this option is only set for the tar format.
 	 */
-	if (rmleadslash && arcn->name[0] == '/') {
+	while (rmleadslash && arcn->name[0] == '/') {
 		if (arcn->name[1] == '\0') {
 			arcn->name[0] = '.';
 		} else {
@@ -627,7 +621,7 @@ mod_name(ARCHD *arcn)
 			paxwarn(0, "Removing leading / from absolute path names in the archive");
 		}
 	}
-	if (rmleadslash && arcn->ln_name[0] == '/' &&
+	while (rmleadslash && arcn->ln_name[0] == '/' &&
 	    (arcn->type == PAX_HLK || arcn->type == PAX_HRG)) {
 		if (arcn->ln_name[1] == '\0') {
 			arcn->ln_name[0] = '.';
@@ -750,6 +744,8 @@ tty_rename(ARCHD *arcn)
 	tty_prnt("Processing continues, name changed to: %s\n", tmpname);
 	res = add_name(arcn->name, arcn->nlen, tmpname);
 	arcn->nlen = strlcpy(arcn->name, tmpname, sizeof(arcn->name));
+	if ((size_t)arcn->nlen >= sizeof(arcn->name))
+		arcn->nlen = sizeof(arcn->name) - 1; /* XXX truncate? */
 	if (res < 0)
 		return(-1);
 	return(0);

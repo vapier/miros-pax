@@ -1,4 +1,4 @@
-/*	$OpenBSD: ftree.c,v 1.25 2004/04/16 22:50:23 deraadt Exp $	*/
+/*	$OpenBSD: ftree.c,v 1.26 2005/04/21 21:47:18 beck Exp $	*/
 /*	$NetBSD: ftree.c,v 1.4 1995/03/21 09:07:21 cgd Exp $	*/
 
 /*-
@@ -34,18 +34,9 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static const char sccsid[] = "@(#)ftree.c	8.2 (Berkeley) 4/18/94";
-#else
-static const char rcsid[] = "$OpenBSD: ftree.c,v 1.25 2004/04/16 22:50:23 deraadt Exp $";
-#endif
-#endif /* not lint */
-
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
@@ -55,6 +46,9 @@ static const char rcsid[] = "$OpenBSD: ftree.c,v 1.25 2004/04/16 22:50:23 deraad
 #include "pax.h"
 #include "ftree.h"
 #include "extern.h"
+
+__SCCSID("@(#)ftree.c	8.2 (Berkeley) 4/18/94");
+__RCSID("$MirOS: src/bin/pax/ftree.c,v 1.2 2007/02/17 04:52:40 tg Exp $");
 
 /*
  * routines to interface with the fts library function.
@@ -494,6 +488,8 @@ next_file(ARCHD *arcn)
 	 * copy file name, set file name length
 	 */
 	arcn->nlen = strlcpy(arcn->name, ftent->fts_path, sizeof(arcn->name));
+	if ((size_t)arcn->nlen >= sizeof(arcn->name))
+		arcn->nlen = sizeof(arcn->name) - 1; /* XXX truncate? */
 	arcn->org_name = ftent->fts_path;
 	return(0);
 }
