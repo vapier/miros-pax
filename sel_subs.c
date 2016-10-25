@@ -49,7 +49,8 @@
 #include "sel_subs.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/sel_subs.c,v 1.6 2012/06/05 18:22:57 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/sel_subs.c,v 1.8 2016/10/25 19:04:26 tg Exp $");
+__IDSTRING(rcsid_sel_subs_h, MIRCPIO_SEL_SUBS_H);
 
 static int str_sec(const char *, time_t *);
 static int usr_match(ARCHD *);
@@ -560,7 +561,7 @@ str_sec(const char *p, time_t *tval)
 	switch (len) {
 	case 12:				/* cc */
 		bigyear = ATOI2(p);
-		lt->tm_year = (bigyear * 100) - TM_YEAR_BASE;
+		lt->tm_year = (bigyear * 100) - 1900;
 		yearset = 1;
 		/* FALLTHROUGH */
 	case 10:				/* yy */
@@ -569,9 +570,7 @@ str_sec(const char *p, time_t *tval)
 		} else {
 			lt->tm_year = ATOI2(p);
 			if (lt->tm_year < 69)		/* hack for 2000 ;-} */
-				lt->tm_year += (2000 - TM_YEAR_BASE);
-			else
-				lt->tm_year += (1900 - TM_YEAR_BASE);
+				lt->tm_year += 100;
 		}
 		/* FALLTHROUGH */
 	case 8:					/* mm */
