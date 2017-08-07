@@ -1,10 +1,9 @@
-/**	$MirOS: src/bin/pax/pax.h,v 1.12 2012/02/16 17:27:32 tg Exp $ */
-/*	$OpenBSD: pax.h,v 1.17 2005/11/09 19:59:06 otto Exp $	*/
+/*	$OpenBSD: pax.h,v 1.17 +1.28 2005/11/09 19:59:06 otto Exp $	*/
 /*	$NetBSD: pax.h,v 1.3 1995/03/21 09:07:41 cgd Exp $	*/
 
 /*-
- * Copyright (c) 2011, 2012
- *	Thorsten Glaser <tg@debian.org>
+ * Copyright (c) 2011, 2012, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -38,6 +37,9 @@
  *
  *	@(#)pax.h	8.2 (Berkeley) 4/18/94
  */
+
+#ifndef MIRCPIO_PAX_H
+#define MIRCPIO_PAX_H "$MirOS: src/bin/pax/pax.h,v 1.18 2017/08/07 20:10:17 tg Exp $"
 
 /*
  * BSD PAX global data structures and constants.
@@ -82,7 +84,7 @@ typedef struct pattern {
 	char		*pstr;		/* pattern to match, user supplied */
 	char		*pend;		/* end of a prefix match */
 	char		*chdname;	/* the dir to change to if not NULL.  */
-	int		plen;		/* length of pstr */
+	size_t		plen;		/* length of pstr */
 	int		flgs;		/* processing/state flags */
 #define MTCH		0x1		/* pattern has been matched */
 #define DIR_MTCH	0x2		/* pattern matched a directory */
@@ -106,7 +108,7 @@ typedef struct {
 	char name[PAXPATHLEN+1];	/* file name */
 	int ln_nlen;			/* link name length */
 	char ln_name[PAXPATHLEN+1];	/* name to link to (if any) */
-	char *org_name;			/* orig name in file system */
+	char *org_name;			/* orig name in filesystem */
 	PATTERN *pat;			/* ptr to pattern match (if any) */
 	struct stat sb;			/* stat buffer see stat(2) */
 	off_t pad;			/* bytes of padding after file xfer */
@@ -220,6 +222,20 @@ typedef struct {
 } FSUB;
 
 /*
+ * Time data for a given file.  This is usually embedded in a structure
+ * indexed by dev+ino, by name, by order in the archive, etc.  set_attr()
+ * takes one of these and will only change the times or mode if the file
+ * at the given name has the indicated dev+ino.
+ */
+struct file_times {
+	ino_t	ft_ino;		/* inode number to verify */
+	time_t	ft_mtime;	/* times to set */
+	time_t	ft_atime;
+	char	*ft_name;	/* name of file to set the times on */
+	dev_t	ft_dev;		/* device number to verify */
+};
+
+/*
  * Format Specific Options List
  *
  * Used to pass format options to the format options handler
@@ -238,6 +254,9 @@ typedef struct oplist {
 #endif
 #ifdef __INTERIX
 #include <sys/mkdev.h>
+#endif
+#ifdef HAVE_SYS_SYSMACROS_H
+#include <sys/sysmacros.h>
 #endif
 #define MAJOR(x)	major(x)
 #define MINOR(x)	minor(x)
@@ -283,6 +302,10 @@ typedef struct oplist {
 #define __SCCSID(x)		__IDSTRING(sccsid,x)
 #endif
 
+#define FILEBITS		(S_ISVTX | S_IRWXU | S_IRWXG | S_IRWXO)
+#define SETBITS			(S_ISUID | S_ISGID)
+#define ABITS			(FILEBITS | SETBITS)
+
 /*
  * General Defines
  */
@@ -291,19 +314,12 @@ typedef struct oplist {
 #define _PAX_		1
 #define _TFILE_BASE	"paxXXXXXXXXXX"
 
-/* copied from <tzfile.h> */
-#define SECSPERMIN	60
-#define MINSPERHOUR	60
-#define HOURSPERDAY	24
-#define DAYSPERNYEAR	365
-#define SECSPERHOUR	(SECSPERMIN * MINSPERHOUR)
-#define SECSPERDAY	((long)SECSPERHOUR * HOURSPERDAY)
-#define TM_YEAR_BASE	1900
-
 #ifndef LONG_OFF_T
 #define OT_FMT		"llu"
 typedef unsigned long long ot_type;
 #else
 #define OT_FMT		"lu"
 typedef unsigned long ot_type;
+#endif
+
 #endif

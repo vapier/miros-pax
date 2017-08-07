@@ -1,4 +1,4 @@
-/*	$OpenBSD: pat_rep.c,v 1.31 2009/10/27 23:59:22 deraadt Exp $	*/
+/*	$OpenBSD: pat_rep.c,v 1.31 +1.40 2009/10/27 23:59:22 deraadt Exp $	*/
 /*	$NetBSD: pat_rep.c,v 1.4 1995/03/21 09:07:33 cgd Exp $	*/
 
 /*-
@@ -48,7 +48,8 @@
 #include "pat_rep.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/pat_rep.c,v 1.6 2012/06/05 19:09:41 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/pat_rep.c,v 1.12 2017/08/07 20:10:16 tg Exp $");
+__IDSTRING(rcsid_pat_rep_h, MIRCPIO_PAT_REP_H);
 
 /*
  * routines to handle pattern matching, name modification (regular expression
@@ -297,7 +298,7 @@ pat_sel(ARCHD *arcn)
 {
 	PATTERN *pt;
 	PATTERN **ppt;
-	int len;
+	size_t len;
 
 	/*
 	 * if no patterns just return
@@ -586,6 +587,25 @@ range_match(char *pattern, int test)
 }
 
 /*
+ * has_dotdot()
+ *	Returns true iff the supplied path contains a ".." component.
+ */
+
+int
+has_dotdot(const char *path)
+{
+	const char *p = path;
+
+	while ((p = strstr(p, "..")) != NULL) {
+		if ((p == path || p[-1] == '/') &&
+		    (p[2] == '/' || p[2] == '\0'))
+			return (1);
+		p += 2;
+	}
+	return (0);
+}
+
+/*
  * mod_name()
  *	modify a selected file name. first attempt to apply replacement string
  *	expressions, then apply interactive file rename. We apply replacement
@@ -603,6 +623,19 @@ int
 mod_name(ARCHD *arcn)
 {
 	int res = 0;
+
+	if (rmleadslash) {
+		/* CVE-2016-6321: completely skip names with dotdot in them */
+		const char *p = strstr(arcn->name, "..");
+
+		if (p && (p == arcn->name || p[-1] == '/') &&
+		    (p[2] == '/' || p[2] == '\0')) {
+			paxwarn(1,
+			    "Skipping pathname with dotdot components: %s",
+			    arcn->name);
+			return (1);
+		}
+	}
 
 	/*
 	 * Strip off leading '/' if appropriate.
@@ -644,7 +677,7 @@ mod_name(ARCHD *arcn)
 	 * anyway). But there are no such requirements for symlinks. On one
 	 * hand the symlink that refers to a file in the archive will have to
 	 * be modified to so it will still work at its new location in the
-	 * file system. On the other hand a symlink that points elsewhere (and
+	 * filesystem. On the other hand a symlink that points elsewhere (and
 	 * should continue to do so) should not be modified. There is clearly
 	 * no perfect solution here. So we handle them like hardlinks. Clearly
 	 * a replacement made by the interactive rename mapping is very likely

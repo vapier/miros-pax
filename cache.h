@@ -1,4 +1,3 @@
-/**	$MirOS: src/bin/pax/cache.h,v 1.2 2012/02/12 00:27:15 tg Exp $ */
 /*	$OpenBSD: cache.h,v 1.4 2003/10/20 06:22:27 jmc Exp $	*/
 /*	$NetBSD: cache.h,v 1.3 1995/03/21 09:07:12 cgd Exp $	*/
 
@@ -37,11 +36,14 @@
  *      @(#)cache.h	8.1 (Berkeley) 5/31/93
  */
 
+#ifndef MIRCPIO_CACHE_H
+#define MIRCPIO_CACHE_H "$MirOS: src/bin/pax/cache.h,v 1.4 2017/08/07 20:10:14 tg Exp $"
+
 /*
  * Constants and data structures used to implement group and password file
  * caches. Traditional passwd/group cache routines perform quite poorly with
  * archives. The chances of hitting a valid lookup with an archive is quite a
- * bit worse than with files already resident on the file system. These misses
+ * bit worse than with files already resident on the filesystem. These misses
  * create a MAJOR performance cost. To address this problem, these routines
  * cache both hits and misses.
  *
@@ -72,3 +74,5 @@ typedef struct gidc {
 	char name[GNMLEN];	/* gid name */
 	gid_t gid;		/* cached gid */
 } GIDC;
+
+#endif

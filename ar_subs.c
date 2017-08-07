@@ -2,8 +2,8 @@
 /*	$NetBSD: ar_subs.c,v 1.5 1995/03/21 09:07:06 cgd Exp $	*/
 
 /*-
- * Copyright (c) 2008, 2011, 2012
- *	Thorsten Glaser <tg@mirbsd.org>
+ * Copyright (c) 2008, 2011, 2012, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -51,7 +51,7 @@
 #include "extern.h"
 #include "options.h"
 
-__RCSID("$MirOS: src/bin/pax/ar_subs.c,v 1.14 2012/06/05 18:22:55 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/ar_subs.c,v 1.18 2017/08/07 20:10:13 tg Exp $");
 
 static void wr_archive(ARCHD *, int is_app);
 static int get_arc(void);
@@ -172,6 +172,8 @@ extract(void)
 	int fd;
 	time_t now;
 
+	sltab_start();
+
 	arcn = &archd;
 	/*
 	 * figure out archive type; pass any format specific options to the
@@ -224,7 +226,7 @@ extract(void)
 
 		/*
 		 * with -u or -D only extract when the archive member is newer
-		 * than the file with the same name in the file system (no
+		 * than the file with the same name in the filesystem (no
 		 * test of being the same type is required).
 		 * NOTE: this test is done BEFORE name modifications as
 		 * specified by pax. this operation can be confusing to the
@@ -379,6 +381,7 @@ extract(void)
 	(void)(*frmt->end_rd)();
 	(void)sigprocmask(SIG_BLOCK, &s_mask, NULL);
 	ar_close();
+	sltab_process(0);
 	proc_dir();
 	pat_chk();
 }
@@ -765,7 +768,7 @@ archive(void)
 
 /*
  * copy()
- *	copy files from one part of the file system to another. this does not
+ *	copy files from one part of the filesystem to another. this does not
  *	use any archive storage. The EFFECT OF THE COPY IS THE SAME as if an
  *	archive was written and then extracted in the destination directory
  *	(except the files are forced to be under the destination directory).
@@ -784,6 +787,8 @@ copy(void)
 	struct stat sb;
 	ARCHD archd;
 	char dirbuf[PAXPATHLEN+1];
+
+	sltab_start();
 
 	arcn = &archd;
 	/*
@@ -1000,6 +1005,7 @@ copy(void)
 	 */
 	(void)sigprocmask(SIG_BLOCK, &s_mask, NULL);
 	ar_close();
+	sltab_process(0);
 	proc_dir();
 	ftree_chk();
 }
@@ -1193,7 +1199,7 @@ get_arc(void)
 	 * find the smallest header size in all archive formats and then set up
 	 * to read the archive.
 	 */
-	for (i = 0; ford[i] >= 0; ++i) {
+	for (i = 0; ford[i] != FSUB_MAX; ++i) {
 		if (fsub[ford[i]].hsz < minhd)
 			minhd = fsub[ford[i]].hsz;
 	}
@@ -1203,18 +1209,18 @@ get_arc(void)
 	hdsz = 0;
 	hdend = hdbuf;
 
+#ifndef SMALL
 	/* try to verify against ar first */
 	if (buf_fill_internal(8) == 8) {
 		i = rd_wrbuf(hdend, 8);
 		if (i == 8 && uar_ismagic(hdbuf) == 0) {
-			extern int F_UAR;
-
-			frmt = &(fsub[F_UAR]);
+			frmt = &(fsub[FSUB_AR]);
 			return (0);
 		}
 		if (i > 0)
 			pback(hdend, i);
 	}
+#endif
 
 	for (;;) {
 		for (;;) {
@@ -1258,7 +1264,7 @@ get_arc(void)
 		 * may be subsets of each other and the order would then be
 		 * important).
 		 */
-		for (i = 0; ford[i] >= 0; ++i) {
+		for (i = 0; ford[i] != FSUB_MAX; ++i) {
 			if ((*fsub[ford[i]].id)(hdbuf, hdsz) < 0)
 				continue;
 			frmt = &(fsub[ford[i]]);

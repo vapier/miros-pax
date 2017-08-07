@@ -1,9 +1,9 @@
-/*	$OpenBSD: options.c,v 1.75 2012/03/04 04:05:15 fgsch Exp $	*/
+/*	$OpenBSD: options.c,v 1.75 +1.88 +1.89 +1.91 2012/03/04 04:05:15 fgsch Exp $	*/
 /*	$NetBSD: options.c,v 1.6 1996/03/26 23:54:18 mrg Exp $	*/
 
 /*-
- * Copyright (c) 2005, 2006, 2007, 2012, 2014
- *	Thorsten Glaser <tg@mirbsd.org>
+ * Copyright (c) 2005, 2006, 2007, 2012, 2014, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -60,7 +60,13 @@
 #include <sys/mtio.h>
 #endif
 
-__RCSID("$MirOS: src/bin/pax/options.c,v 1.52 2014/07/03 19:36:25 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/options.c,v 1.62 2017/08/07 20:10:15 tg Exp $");
+__IDSTRING(rcsid_ar_h, MIRCPIO_AR_H);
+__IDSTRING(rcsid_cpio_h, MIRCPIO_CPIO_H);
+__IDSTRING(rcsid_extern_h, MIRCPIO_EXTERN_H);
+__IDSTRING(rcsid_options_h, MIRCPIO_OPTIONS_H);
+__IDSTRING(rcsid_pax_h, MIRCPIO_PAX_H);
+__IDSTRING(rcsid_tar_h, MIRCPIO_TAR_H);
 
 #ifndef _PATH_DEFTAPE
 #define _PATH_DEFTAPE "/dev/rmt0"
@@ -78,8 +84,10 @@ static char flgch[] = FLGCH;	/* list of all possible flags */
 static OPLIST *ophead = NULL;	/* head for format specific options -x */
 static OPLIST *optail = NULL;	/* option tail */
 
+#ifndef SMALL
 static int no_op(void);
 static int no_op_i(int);
+#endif
 static void printflg(unsigned int);
 static int c_frmt(const void *, const void *);
 static off_t str_offt(char *);
@@ -97,6 +105,7 @@ static void process_M(const char *, void (*)(void));
 
 /* command to run as gzip */
 static const char GZIP_CMD[] = "gzip";
+#ifndef SMALL
 /* command to run as compress */
 static const char COMPRESS_CMD[] = "compress";
 /* command to run as bzip2 */
@@ -107,11 +116,13 @@ static const char XZ_CMD[] = "xz";
 static const char LZMA_WRCMD[] = "lzma";
 /* command to run as lzop */
 static const char LZOP_CMD[] = "lzop";
+#endif
 /* used as flag value */
 #define COMPRESS_GUESS_CMD ((const void *)&compress_program)
 
 /*
  *	Format specific routine table - MUST BE IN SORTED ORDER BY NAME
+ *	(see enum fsub_order in options.h for index)
  *	(see pax.h for description of each function)
  *
  * 	name, blksz, hdsz, udev, hlk, blkagn, inhead, id, st_read,
@@ -120,71 +131,79 @@ static const char LZOP_CMD[] = "lzop";
  */
 
 FSUB fsub[] = {
-/* 0: UNIX ARCHIVER */
+#ifndef SMALL
+/* FSUB_AR: UNIX ARCHIVER */
 	{"ar", 512, sizeof(HD_AR), 0, 0, 0, 0, uar_id, no_op,
 	uar_rd, uar_endrd, uar_stwr, uar_wr, no_op, uar_trail,
 	rd_wrfile, uar_wr_data, bad_opt, 1},
 
-/* 1: OLD BINARY CPIO */
+/* FSUB_BCPIO: OLD BINARY CPIO */
 	{"bcpio", 5120, sizeof(HD_BCPIO), 1, 0, 0, 1, bcpio_id, cpio_strd,
 	bcpio_rd, bcpio_endrd, cpio_stwr, bcpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
+#endif
 
-/* 2: OLD OCTAL CHARACTER CPIO */
+/* FSUB_CPIO: OLD OCTAL CHARACTER CPIO */
 	{"cpio", 5120, sizeof(HD_CPIO), 1, 0, 0, 1, cpio_id, cpio_strd,
 	cpio_rd, cpio_endrd, cpio_stwr, cpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 3: OLD OCTAL CHARACTER CPIO, UID/GID CLEARED (ANONYMISED) */
+/* FSUB_DIST: OLD OCTAL CHARACTER CPIO, UID/GID CLEARED (ANONYMISED) */
 	{"dist", 512, sizeof(HD_CPIO), 1, 0, 0, 1, cpio_id, cpio_strd,
 	cpio_rd, cpio_endrd, dist_stwr, cpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 4: SVR4 HEX CPIO */
+/* FSUB_SV4CPIO: SVR4 HEX CPIO */
 	{"sv4cpio", 5120, sizeof(HD_VCPIO), 1, 0, 0, 1, vcpio_id, cpio_strd,
 	vcpio_rd, vcpio_endrd, cpio_stwr, vcpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 5: SVR4 HEX CPIO WITH CRC */
+/* FSUB_SV4CRC: SVR4 HEX CPIO WITH CRC */
 	{"sv4crc", 5120, sizeof(HD_VCPIO), 1, 0, 0, 1, crc_id, crc_strd,
 	vcpio_rd, vcpio_endrd, crc_stwr, vcpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 6: OLD TAR */
+#ifndef SMALL
+/* FSUB_TAR: OLD TAR */
 	{"tar", 10240, BLKMULT, 0, 1, BLKMULT, 0, tar_id, no_op,
 	tar_rd, tar_endrd, no_op_i, tar_wr, tar_endwr, tar_trail,
 	rd_wrfile, wr_rdfile, tar_opt, 0},
+#endif
 
-/* 7: POSIX USTAR */
+/* FSUB_USTAR: POSIX USTAR */
 	{"ustar", 10240, BLKMULT, 0, 1, BLKMULT, 0, ustar_id, ustar_strd,
 	ustar_rd, tar_endrd, ustar_stwr, ustar_wr, tar_endwr, tar_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 8: SVR4 HEX CPIO WITH CRC, UID/GID/MTIME CLEARED (NORMALISED) */
+/* FSUB_V4NORM: SVR4 HEX CPIO WITH CRC, UID/GID/MTIME CLEARED (NORMALISED) */
 	{"v4norm", 512, sizeof(HD_VCPIO), 1, 0, 0, 1, crc_id, crc_strd,
 	vcpio_rd, vcpio_endrd, v4norm_stwr, vcpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 
-/* 9: SVR4 HEX CPIO WITH CRC, UID/GID CLEARED (ANONYMISED) */
+/* FSUB_V4ROOT: SVR4 HEX CPIO WITH CRC, UID/GID CLEARED (ANONYMISED) */
 	{"v4root", 512, sizeof(HD_VCPIO), 1, 0, 0, 1, crc_id, crc_strd,
 	vcpio_rd, vcpio_endrd, v4root_stwr, vcpio_wr, cpio_endwr, cpio_trail,
 	rd_wrfile, wr_rdfile, bad_opt, 0},
 };
-#define	F_OCPIO	1	/* format when called as cpio -6 */
-#define	F_ACPIO	2	/* format when called as cpio -c */
-#define	F_NCPIO	4	/* format when called as tar -R */
-#define	F_CPIO	5	/* format when called as cpio or tar -S */
-#define F_OTAR	6	/* format when called as tar -o */
-#define F_TAR	7	/* format when called as tar */
-int F_UAR = 0;
-#define DEFLT	7	/* default write format from list above */
 
 /*
  * ford is the archive search order used by get_arc() to determine what kind
  * of archive we are dealing with. This helps to properly id archive formats
  * some formats may be subsets of others....
  */
-int ford[] = { 7, 6, 5, 4, 2, 1, -1 };
+const int ford[] = {
+	FSUB_USTAR,
+#ifndef SMALL
+	FSUB_TAR,
+#endif
+	FSUB_SV4CRC,
+	FSUB_SV4CPIO,
+	FSUB_CPIO,
+#ifndef SMALL
+	FSUB_BCPIO,
+#endif
+	FSUB_MAX
+};
 
 /* normalise archives */
 int anonarch = 0;
@@ -193,9 +212,10 @@ int anonarch = 0;
 int to_stdout = 0;
 
 /*
- * Do we have -C anywhere?
+ * Do we have -C anywhere and what is it?
  */
 int havechd = 0;
+char *chdname = NULL;
 
 /*
  * options()
@@ -289,6 +309,7 @@ pax_options(int argc, char **argv)
 			iflag = 1;
 			flg |= IF;
 			break;
+#ifndef SMALL
 		case 'J':
 			/*
 			 * use xz (non-standard option)
@@ -301,6 +322,7 @@ pax_options(int argc, char **argv)
 			 */
 			compress_program = BZIP2_CMD;
 			break;
+#endif
 		case 'k':
 			/*
 			 * do not clobber files that exist
@@ -550,7 +572,7 @@ pax_options(int argc, char **argv)
 			break;
 		case 'X':
 			/*
-			 * do not pass over mount points in the file system
+			 * do not pass over mount points in the filesystem
 			 */
 			Xflag = 1;
 			flg |= CXF;
@@ -619,7 +641,7 @@ pax_options(int argc, char **argv)
 	 * adopt the format of the existing archive if none was supplied.
 	 */
 	if (!(flg & XF) && (act == ARCHIVE))
-		frmt = &(fsub[DEFLT]);
+		frmt = &(fsub[FSUB_USTAR]);
 
 	/*
 	 * process the args as they are interpreted by the operation mode
@@ -672,7 +694,7 @@ tar_options(int argc, char **argv)
 {
 	int c;
 	int fstdin = 0;
-	int Oflag = 0;
+	int Oflag = FSUB_USTAR;
 	int nincfiles = 0;
 	int incfiles_max = 0;
 	struct incfile {
@@ -692,9 +714,11 @@ tar_options(int argc, char **argv)
 	while ((c = getoldopt(argc, argv,
 	    "014578AaBb:C:cef:HhI:JjLM:mNOoPpqRrSs:tuvwXxZz")) != -1) {
 		switch (c) {
+#ifndef SMALL
 		case 'A':
-			Oflag = 5;
+			Oflag = FSUB_AR;
 			break;
+#endif
 		case 'a':
 			/*
 			 * use compression dependent on arcname
@@ -746,6 +770,7 @@ tar_options(int argc, char **argv)
 			 */
 			Lflag = 1;
 			break;
+#ifndef SMALL
 		case 'J':
 			/*
 			 * use xz (non-standard option)
@@ -758,6 +783,7 @@ tar_options(int argc, char **argv)
 			 */
 			compress_program = BZIP2_CMD;
 			break;
+#endif
 		case 'm':
 			/*
 			 * do not preserve modification time
@@ -765,12 +791,19 @@ tar_options(int argc, char **argv)
 			pmtime = 0;
 			break;
 		case 'O':
-			Oflag = 1;
+#ifndef SMALL
+			Oflag = FSUB_TAR;
+#else
+			Oflag = FSUB_MAX;
+#endif
 			to_stdout = 2;
 			break;
+#ifndef SMALL
 		case 'o':
-			Oflag = 2;
+			Oflag = FSUB_TAR;
+			tar_nodir = 1;
 			break;
+#endif
 		case 'p':
 			/*
 			 * preserve uid/gid and file mode, regardless of umask
@@ -792,11 +825,11 @@ tar_options(int argc, char **argv)
 			tar_set_action(APPND);
 			break;
 		case 'R':
-			Oflag = 3;
+			Oflag = FSUB_SV4CPIO;
 			anonarch |= ANON_INODES | ANON_HARDLINKS;
 			break;
 		case 'S':
-			Oflag = 4;
+			Oflag = FSUB_SV4CRC;
 			anonarch |= ANON_INODES | ANON_HARDLINKS;
 			break;
 		case 's':
@@ -901,16 +934,18 @@ tar_options(int argc, char **argv)
 			break;
 		case 'X':
 			/*
-			 * do not pass over mount points in the file system
+			 * do not pass over mount points in the filesystem
 			 */
 			Xflag = 1;
 			break;
+#ifndef SMALL
 		case 'Z':
 			/*
 			 * use compress
 			 */
 			compress_program = COMPRESS_CMD;
 			break;
+#endif
 		case '0':
 			arcname = DEV_0;
 			break;
@@ -940,6 +975,16 @@ tar_options(int argc, char **argv)
 	/* tar requires an action. */
 	if (act == ERROR)
 		tar_usage();
+
+	if (!fstdin && ((arcname == NULL) || (*arcname == '\0'))) {
+		arcname = getenv("TAPE");
+		if ((arcname == NULL) || (*arcname == '\0'))
+			arcname = _PATH_DEFTAPE;
+		else if ((arcname[0] == '-') && (arcname[1]== '\0')) {
+			arcname = NULL;
+			fstdin = 1;
+		}
+	}
 
 	/* traditional tar behaviour (pax uses stderr unless in list mode) */
 	if (fstdin == 1 && act == ARCHIVE)
@@ -1027,31 +1072,9 @@ tar_options(int argc, char **argv)
 		break;
 	case ARCHIVE:
 	case APPND:
-		switch(Oflag) {
-		    case 0:
-			frmt = &(fsub[F_TAR]);
-			break;
-		    case 1:
-			frmt = &(fsub[F_OTAR]);
-			break;
-		    case 2:
-			frmt = &(fsub[F_OTAR]);
-			if (opt_add("write_opt=nodir") < 0)
-				tar_usage();
-			break;
-		    case 3:
-			frmt = &(fsub[F_NCPIO]);
-			break;
-		    case 4:
-			frmt = &(fsub[F_CPIO]);
-			break;
-		    case 5:
-			frmt = &(fsub[F_UAR]);
-			break;
-		    default:
+		if (Oflag == FSUB_MAX)
 			tar_usage();
-			break;
-		}
+		frmt = &(fsub[Oflag]);
 
 		if (chdname != NULL) {
 			/* initial chdir() */
@@ -1124,11 +1147,6 @@ tar_options(int argc, char **argv)
 	}
 	if (to_stdout != 1)
 		to_stdout = 0;
-	if (!fstdin && ((arcname == NULL) || (*arcname == '\0'))) {
-		arcname = getenv("TAPE");
-		if ((arcname == NULL) || (*arcname == '\0'))
-			arcname = _PATH_DEFTAPE;
-	}
 }
 
 int
@@ -1219,7 +1237,7 @@ cpio_options(int argc, char **argv)
 			/*
 			 * ASCII cpio header
 			 */
-			frmt = &(fsub[F_ACPIO]);
+			frmt = &(fsub[FSUB_CPIO]);
 			break;
 		case 'd':
 			/*
@@ -1239,6 +1257,7 @@ cpio_options(int argc, char **argv)
 			 */
 			cpio_set_action(EXTRACT);
 			break;
+#ifndef SMALL
 		case 'J':
 			/*
 			 * use xz (non-standard option)
@@ -1251,6 +1270,7 @@ cpio_options(int argc, char **argv)
 			 */
 			compress_program = BZIP2_CMD;
 			break;
+#endif
 		case 'k':
 			break;
 		case 'l':
@@ -1270,7 +1290,7 @@ cpio_options(int argc, char **argv)
 			 * create an archive
 			 */
 			cpio_set_action(ARCHIVE);
-			frmt = &(fsub[F_CPIO]);
+			frmt = &(fsub[FSUB_SV4CRC]);
 			break;
 		case 'p':
 			/*
@@ -1412,12 +1432,14 @@ cpio_options(int argc, char **argv)
 			 * swap halfwords after reading data
 			 */
 			break;
+#ifndef SMALL
 		case 'Z':
 			/*
 			 * use compress (non-standard option)
 			 */
 			compress_program = COMPRESS_CMD;
 			break;
+#endif
 		case '0':
 			/*
 			 * Use \0 as pathname terminator.
@@ -1425,12 +1447,14 @@ cpio_options(int argc, char **argv)
 			 */
 			zeroflag = 1;
 			break;
+#ifndef SMALL
 		case '6':
 			/*
 			 * process Version 6 cpio format
 			 */
-			frmt = &(fsub[F_OCPIO]);
+			frmt = &(fsub[FSUB_BCPIO]);
 			break;
+#endif
 		case '?':
 		default:
 			if (opterr == 0) {
@@ -1710,6 +1734,7 @@ str_offt(char *val)
 	return ((off_t)num);
 }
 
+#ifndef SMALL
 /*
  * no_op()
  *	for those option functions where the archive format has nothing to do.
@@ -1728,6 +1753,7 @@ no_op_i(int is_app __attribute__((__unused__)))
 {
 	return(0);
 }
+#endif
 
 /*
  * pax_usage()
@@ -1866,7 +1892,7 @@ process_M(const char *arg, void (*call_usage)(void))
 }
 
 void
-guess_compress_program(int wr)
+guess_compress_program(int wr __attribute__((__unused__)))
 {
 	const char *ccp;
 
@@ -1889,6 +1915,7 @@ guess_compress_program(int wr)
 		return;
 	}
 
+#ifndef SMALL
 	/* guess extended format xz */
 	if (!strcmp(ccp, "xz") ||
 	    !strcmp(ccp, "txz") ||
@@ -1918,11 +1945,7 @@ guess_compress_program(int wr)
 	}
 
 	/* guess extended format lzma (using xz for decompression) */
-	if (!strcmp(ccp, "lz") ||
-	    !strcmp(ccp, "lzma") ||
-	    !strcmp(ccp, "tlz") ||
-	    !strcmp(ccp, "clz") ||
-	    !strcmp(ccp, "nlz")) {
+	if (!strcmp(ccp, "lzma")) {
 		compress_program = wr ? LZMA_WRCMD : XZ_CMD;
 		return;
 	}
@@ -1932,6 +1955,7 @@ guess_compress_program(int wr)
 		compress_program = LZOP_CMD;
 		return;
 	}
+#endif
 
 	/* no sugar */
 	compress_program = NULL;

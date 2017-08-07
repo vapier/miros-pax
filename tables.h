@@ -1,9 +1,9 @@
-/**	$MirOS: src/bin/pax/tables.h,v 1.4 2008/11/08 23:03:39 tg Exp $ */
 /*	$OpenBSD: tables.h,v 1.8 2006/08/05 23:05:13 ray Exp $	*/
 /*	$NetBSD: tables.h,v 1.3 1995/03/21 09:07:47 cgd Exp $	*/
 
 /*-
- * Copyright (c) 2005 Thorsten Glaser <tg@mirbsd.org>
+ * Copyright (c) 2005, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -38,6 +38,9 @@
  *	@(#)tables.h	8.1 (Berkeley) 5/31/93
  */
 
+#ifndef MIRCPIO_TABLES_H
+#define MIRCPIO_TABLES_H "$MirOS: src/bin/pax/tables.h,v 1.7 2017/08/07 20:10:18 tg Exp $"
+
 /*
  * data structures and constants used by the different databases kept by pax
  */
@@ -52,12 +55,13 @@
 #define N_TAB_SZ	541		/* interactive rename hash table */
 #define D_TAB_SZ	317		/* unique device mapping table */
 #define A_TAB_SZ	317		/* ftree dir access time reset table */
+#define SL_TAB_SZ	317		/* escape symlink tables */
 #define MAXKEYLEN	64		/* max number of chars for hash */
 #define DIRP_SIZE	64		/* initial size of created dir table */
 
 /*
  * file hard link structure (hashed by dev/ino and chained) used to find the
- * hard links in a file system or with some archive formats (cpio)
+ * hard links in a filesystem or with some archive formats (cpio)
  */
 typedef struct hrdlnk {
 	char		*name;	/* name of first file seen with this ino/dev */
@@ -145,11 +149,7 @@ typedef struct dlist {
  */
 
 typedef struct atdir {
-	char *name;	/* name of directory to reset */
-	dev_t dev;	/* dev and inode for fast lookup */
-	ino_t ino;
-	time_t mtime;	/* access and mod time to reset to */
-	time_t atime;
+	struct file_times ft;
 	struct atdir *fow;
 } ATDIR;
 
@@ -164,10 +164,8 @@ typedef struct atdir {
  */
 
 typedef struct dirdata {
-	char *name;	/* file name */
-	time_t mtime;	/* mtime to set */
-	time_t atime;	/* atime to set */
-	u_int16_t mode;	/* file mode to restore */
+	struct file_times ft;
+	u_int16_t mode;		/* file mode to restore */
 	u_int16_t frc_mode;	/* do we force mode settings? */
 } DIRDATA;
 
@@ -181,3 +179,5 @@ typedef struct hrdflnk {
 	ino_t		newi;	/* new inode number */
 	struct hrdflnk	*fow;
 } HRDFLNK;
+
+#endif

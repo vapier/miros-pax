@@ -48,7 +48,8 @@
 #include "ftree.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/ftree.c,v 1.6 2012/05/20 16:13:17 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/ftree.c,v 1.9 2017/08/07 20:10:14 tg Exp $");
+__IDSTRING(rcsid_ftree_h, MIRCPIO_FTREE_H);
 
 /*
  * routines to interface with the fts library function.
@@ -340,8 +341,6 @@ int
 next_file(ARCHD *arcn)
 {
 	int cnt;
-	time_t atime;
-	time_t mtime;
 
 	/*
 	 * ftree_sel() might have set the ftree_skip flag if the user has the
@@ -396,16 +395,16 @@ next_file(ARCHD *arcn)
 			 * remember to force the time (this is -t on a read
 			 * directory, not a created directory).
 			 */
-			if (!tflag || (get_atdir(ftent->fts_statp->st_dev,
-			    ftent->fts_statp->st_ino, &mtime, &atime) < 0))
+			if (!tflag)
 				continue;
-			set_ftime(ftent->fts_path, mtime, atime, 1);
+			do_atdir(ftent->fts_path, ftent->fts_statp->st_dev,
+			    ftent->fts_statp->st_ino);
 			continue;
 		case FTS_DC:
 			/*
-			 * fts claims a file system cycle
+			 * fts claims a filesystem cycle
 			 */
-			paxwarn(1,"File system cycle found at %s",ftent->fts_path);
+			paxwarn(1,"Filesystem cycle found at %s",ftent->fts_path);
 			continue;
 		case FTS_DNR:
 			syswarn(1, ftent->fts_errno,
@@ -413,7 +412,7 @@ next_file(ARCHD *arcn)
 			continue;
 		case FTS_ERR:
 			syswarn(1, ftent->fts_errno,
-			    "File system traversal error");
+			    "Filesystem traversal error");
 			continue;
 		case FTS_NS:
 		case FTS_NSOK:

@@ -1,9 +1,9 @@
-/*	$OpenBSD: tar.c,v 1.43 2010/12/02 04:08:27 tedu Exp $	*/
+/*	$OpenBSD: tar.c,v 1.43 +1.57 +1.59 2010/12/02 04:08:27 tedu Exp $	*/
 /*	$NetBSD: tar.c,v 1.5 1995/03/21 09:07:49 cgd Exp $	*/
 
 /*-
- * Copyright (c) 2006, 2012
- *	Thorsten Glaser <tg@mirbsd.org>
+ * Copyright (c) 2006, 2012, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -49,7 +49,7 @@
 #include "tar.h"
 #include "options.h"
 
-__RCSID("$MirOS: src/bin/pax/tar.c,v 1.14 2012/06/05 18:22:58 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/tar.c,v 1.18 2017/08/07 20:10:19 tg Exp $");
 
 /*
  * Routines for reading, writing and header identify of various versions of tar
@@ -72,7 +72,9 @@ static gid_t gid_warn;
  * Routines common to all versions of tar
  */
 
-static int tar_nodir;			/* do not write dirs under old tar */
+#ifndef SMALL
+int tar_nodir;				/* do not write dirs under old tar */
+#endif
 char *gnu_name_string;			/* GNU ././@LongLink hackery name */
 char *gnu_link_string;			/* GNU ././@LongLink hackery link */
 
@@ -292,6 +294,7 @@ tar_chksm(char *blk, int len)
 	return(chksm);
 }
 
+#ifndef SMALL
 /*
  * Routines for old BSD style tar (also made portable to sysV tar)
  */
@@ -518,7 +521,7 @@ tar_wr(ARCHD *arcn)
 	char hdblk[sizeof(HD_TAR)];
 
 	/*
-	 * check for those file system types which tar cannot store
+	 * check for those filesystem types which tar cannot store
 	 */
 	switch (arcn->type) {
 	case PAX_DIR:
@@ -652,6 +655,7 @@ tar_wr(ARCHD *arcn)
 	paxwarn(1, "tar header field is too small for %s", arcn->org_name);
 	return(1);
 }
+#endif
 
 /*
  * Routines for POSIX ustar
@@ -903,7 +907,7 @@ ustar_wr(ARCHD *arcn)
 	anonarch_init();
 
 	/*
-	 * check for those file system types ustar cannot store
+	 * check for those filesystem types ustar cannot store
 	 */
 	if (arcn->type == PAX_SCK) {
 		paxwarn(1, "ustar cannot archive a socket %s", arcn->org_name);
@@ -1152,6 +1156,16 @@ name_split(char *name, int len)
 	 * include the slash between the two parts that gets thrown away)
 	 */
 	start = name + len - TNMSZ - 1;
+
+	/*
+	 * the prefix may not be empty, so skip the first character when
+	 * trying to split a path of exactly TNMSZ+1 characters.
+	 * NOTE: This means the ustar format can't store /str if
+	 * str contains no slashes and the length of str == TNMSZ
+	 */
+	if (start == name)
+		++start;
+
 	while ((*start != '\0') && (*start != '/'))
 		++start;
 
@@ -1161,15 +1175,12 @@ name_split(char *name, int len)
 	 */
 	if (*start == '\0')
 		return(NULL);
-	len = start - name;
 
 	/*
-	 * NOTE: /str where the length of str == TNMSZ cannot be stored under
-	 * the p1003.1-1990 spec for ustar. We could force a prefix of / and
-	 * the file would then expand on extract to //str. The len == 0 below
-	 * makes this special case follow the spec to the letter.
+	 * the split point isn't valid if it results in a prefix
+	 * longer than TPFSZ
 	 */
-	if ((len > TPFSZ) || (len == 0))
+	if ((start - name) > TPFSZ)
 		return(NULL);
 
 	/*

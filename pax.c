@@ -2,7 +2,7 @@
 /*	$NetBSD: pax.c,v 1.5 1996/03/26 23:54:20 mrg Exp $	*/
 
 /*-
- * Copyright (c) 2012, 2015
+ * Copyright (c) 2012, 2015, 2016
  *	mirabilos <m@mirbsd.org>
  * Copyright (c) 1992 Keith Muller.
  * Copyright (c) 1992, 1993
@@ -53,7 +53,7 @@
 #include "pax.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/pax.c,v 1.21 2015/10/14 18:10:08 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/pax.c,v 1.23 2017/08/07 20:10:16 tg Exp $");
 
 static int gen_init(void);
 static void sig_cleanup(int) __attribute__((__noreturn__));
@@ -155,11 +155,11 @@ char	*tempbase;		/* basename of tempfile to use for mkstemp(3) */
  *	archive and pax the specific format specifications.
  * 2.3	Blocking size and format is rigidly enforced on writes.
  * 2.4	Formats which may exhibit header overflow problems (they have fields
- *	too small for large file systems, such as inode number storage), use
+ *	too small for large filesystems, such as inode number storage), use
  *	routines designed to repair this problem. These techniques still
  *	conform to both pax and format specifications, but no longer truncate
  *	these fields. This removes any restrictions on using these archive
- *	formats on large file systems.
+ *	formats on large filesystems.
  * 2.5	Multiple archive volumes can be written and may span over different
  *	archive devices
  * 2.6	A archive volume record limit allows the user to specify the number
@@ -340,6 +340,7 @@ sig_cleanup(int which_sig)
 	}
 
 	ar_close();			/* XXX signal race */
+	sltab_process(1);
 	proc_dir();			/* XXX signal race */
 	if (tflag)
 		atdir_end();		/* XXX signal race */

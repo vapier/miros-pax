@@ -1,7 +1,7 @@
-.\"	$MirOS: src/bin/pax/tar.1,v 1.28 2016/02/11 20:12:10 tg Exp $
-.\"	$OpenBSD: tar.1,v 1.55 2010/12/02 04:08:27 tedu Exp $
+.\"	$MirOS: src/bin/pax/tar.1,v 1.35 2017/08/07 20:10:19 tg Exp $
+.\"	$OpenBSD: tar.1,v 1.55 +1.58 +1.59 2010/12/02 04:08:27 tedu Exp $
 .\"
-.\" Copyright (c) 2005, 2008, 2009, 2011, 2012, 2014, 2016
+.\" Copyright (c) 2005, 2008, 2009, 2011, 2012, 2014, 2016, 2017
 .\"	mirabilos <m@mirbsd.org>
 .\" Copyright (c) 1996 SigmaSoft, Th. Lockert
 .\" All rights reserved.
@@ -82,7 +82,7 @@
 .\" with -mandoc, it might implement .Mx itself, but we want to
 .\" use our own definition. And .Dd must come *first*, always.
 .\"
-.Dd $Mdocdate: June 5 2012 $
+.Dd $Mdocdate: March 29 2017 $
 .\"
 .\" Check which macro package we use, and do other -mdoc setup.
 .\"
@@ -321,6 +321,12 @@ Stop after the first error.
 Filename where the archive is stored.
 Defaults to
 .Pa /dev/rst0 .
+If set to hyphen
+.Pq Sq \-
+standard output is used.
+See also the
+.Ev TAPE
+environment variable.
 .It Fl H
 Follow symlinks given on the command line only.
 .It Fl h
@@ -407,23 +413,24 @@ If reading, extract files to standard output.
 .br
 If writing, write old-style (non-POSIX) archives.
 .It Fl o
+If writing, write old-style (non-POSIX) archives.
 Don't write directory information that the older (V7) style
 .Nm tar
 is unable to decode.
-This implies the
-.Fl O
-flag.
 .It Fl P
-Do not strip leading slashes
+For security reasons,
+.Nm
+skips pathnames containing dotdot
+.Pq Dq ..\&
+components and strips leading slashes
 .Pq Sq /
-from pathnames.
-The default is to strip leading slashes.
+from pathnames by default; this option disables that behaviour.
 .It Fl p
 Preserve user and group ID as well as file mode regardless of
 the current
 .Xr umask 2 .
-The setuid and setgid bits are only preserved if the user is
-the superuser.
+The setuid and setgid bits are only preserved if the user and group ID
+could be preserved.
 Only meaningful in conjunction with the
 .Fl x
 flag.
@@ -511,7 +518,7 @@ This option causes
 to prompt the user for the filename to use when storing or
 extracting files in an archive.
 .It Fl X
-Do not cross mount points in the file system.
+Do not cross mount points in the filesystem.
 .It Fl Z
 Use the
 .Xr compress 1
@@ -533,6 +540,9 @@ Path in which to store temporary files.
 .It Ev TAPE
 Default tape device to use instead of
 .Pa /dev/rst0 .
+If set to hyphen
+.Pq Sq \-
+standard output is used.
 .El
 .Sh FILES
 .Bl -tag -width "/dev/rst0"
@@ -645,11 +655,12 @@ A
 command first appeared in
 .At v7 .
 .Sh AUTHORS
-Keith Muller at the University of California, San Diego.
-.Pp
+.An -nosplit
+.An Keith Muller
+at the University of California, San Diego.
 .Mx
 extensions by
-.An Thorsten Glaser Aq tg@mirbsd.org .
+.An mirabilos Aq m@mirbsd.org .
 .Sh CAVEATS
 The flags
 .Fl AaJjLMNRS
