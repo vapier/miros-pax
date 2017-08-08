@@ -1,4 +1,4 @@
-/*	$OpenBSD: buf_subs.c,v 1.23 2009/12/22 12:09:36 jasper Exp $	*/
+/*	$OpenBSD: buf_subs.c,v 1.23 +1.30 2009/12/22 12:09:36 jasper Exp $	*/
 /*	$NetBSD: buf_subs.c,v 1.5 1995/03/21 09:07:08 cgd Exp $	*/
 
 /*-
@@ -46,7 +46,7 @@
 #include "pax.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/buf_subs.c,v 1.6 2012/06/05 18:22:56 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/buf_subs.c,v 1.9 2017/08/08 16:42:49 tg Exp $");
 
 /*
  * routines which implement archive and file buffering
@@ -162,7 +162,7 @@ rd_start(void)
 
 /*
  * cp_start()
- *	set up buffer system for copying within the file system
+ *	set up buffer system for copying within the filesystem
  */
 
 void
@@ -875,10 +875,13 @@ buf_fill_internal(int numb)
 
 		/*
 		 * errors require resync, EOF goes to next archive
+		 * but in case we have not determined yet the format,
+		 * this means that we have a very short file, so we
+		 * are done again.
 		 */
 		if (cnt < 0)
 			break;
-		if (ar_do_keepopen || ar_next() < 0) {
+		if (ar_do_keepopen || frmt == NULL || ar_next() < 0) {
 			fini = 1;
 			return(0);
 		}
@@ -1007,6 +1010,7 @@ buf_flush(int bufcnt)
 	return(-1);
 }
 
+#ifndef SMALL
 /*
  * wr_rdfile replacement for the Unix Archiver (padding)
  */
@@ -1030,3 +1034,4 @@ uar_wr_data(ARCHD *arcn, int ifd, off_t *left)
 	*bufpt++ = '\n';
 	return (0);
 }
+#endif

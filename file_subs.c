@@ -1,9 +1,9 @@
-/*	$OpenBSD: file_subs.c,v 1.32 2009/12/22 12:08:30 jasper Exp $	*/
+/*	$OpenBSD: file_subs.c,v 1.32 +1.46 +1.48 +1.50 2009/12/22 12:08:30 jasper Exp $	*/
 /*	$NetBSD: file_subs.c,v 1.4 1995/03/21 09:07:18 cgd Exp $	*/
 
 /*-
- * Copyright (c) 2007, 2008, 2009, 2012, 2014
- *	Thorsten Glaser <tg@mirbsd.org>
+ * Copyright (c) 2007, 2008, 2009, 2012, 2014, 2016
+ *	mirabilos <m@mirbsd.org>
  * Copyright (c) 2011
  *	Svante Signell <svante.signell@telia.com>
  * Copyright (c) 1992 Keith Muller.
@@ -57,7 +57,7 @@
 #include "options.h"
 #include "extern.h"
 
-__RCSID("$MirOS: src/bin/pax/file_subs.c,v 1.20 2015/10/13 20:18:50 tg Exp $");
+__RCSID("$MirOS: src/bin/pax/file_subs.c,v 1.25 2017/08/08 16:42:49 tg Exp $");
 
 #ifndef __GLIBC_PREREQ
 #define __GLIBC_PREREQ(maj,min)	0
@@ -76,10 +76,6 @@ static void fset_ftime(char *, int, time_t, time_t, int);
  * routines that deal with file operations such as: creating, removing;
  * and setting access modes, uid/gid and times of files
  */
-
-#define FILEBITS		(S_ISVTX | S_IRWXU | S_IRWXG | S_IRWXO)
-#define SETBITS			(S_ISUID | S_ISGID)
-#define ABITS			(FILEBITS | SETBITS)
 
 /*
  * file_creat()
@@ -107,7 +103,7 @@ file_creat(ARCHD *arcn)
 	 * first with lstat.
 	 */
 	file_mode = arcn->sb.st_mode & FILEBITS;
-	if ((fd = open(arcn->name, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL,
+	if ((fd = open(arcn->name, O_WRONLY | O_CREAT | O_EXCL,
 	    file_mode)) >= 0)
 		return(fd);
 
@@ -213,6 +209,15 @@ lnk_creat(ARCHD *arcn, int *fdp)
 	}
 
 	rv = mk_link(arcn->ln_name, &sb, arcn->name, 0);
+	if (rv == 0) {
+		/* check for a hardlink to a placeholder symlink */
+		rv = sltab_add_link(arcn->name, &sb);
+
+		if (rv < 0) {
+			/* arrgh, it failed, clean up */
+			unlink(arcn->name);
+		}
+	}
 	if (fdp != NULL && rv == 0 && sb.st_size == 0 && arcn->skip > 0) {
 		/* request to write out file data late (broken archive) */
 		if (pmode)
@@ -347,6 +352,7 @@ mk_link(char *to, struct stat *to_sb, char *from, int ign)
 				syswarn(1, errno, "Unable to remove %s", from);
 				return(-1);
 			}
+			delete_dir(sb.st_dev, sb.st_ino);
 		} else if (unlink(from) < 0) {
 			if (!ign) {
 				syswarn(1, errno, "Unable to remove %s", from);
@@ -421,7 +427,7 @@ mk_link(char *to, struct stat *to_sb, char *from, int ign)
 
 /*
  * node_creat()
- *	create an entry in the file system (other than a file or hard link).
+ *	create an entry in the filesystem (other than a file or hard link).
  *	If successful, sets uid/gid modes and times as required.
  * Return:
  *	0 if ok, -1 otherwise
@@ -438,7 +444,7 @@ node_creat(ARCHD *arcn)
 	struct stat sb;
 	char *target = NULL;
 	char *nm = arcn->name;
-	int len;
+	int len, defer_pmode = 0;
 
 	/*
 	 * create node based on type, if that fails try to unlink the node and
@@ -506,7 +512,21 @@ node_creat(ARCHD *arcn)
 			free(target);
 			return (-1);
 		case PAX_SLK:
-			res = symlink(arcn->ln_name, nm);
+			if (arcn->ln_name[0] != '/' &&
+			    !has_dotdot(arcn->ln_name))
+				res = symlink(arcn->ln_name, nm);
+			else {
+				/*
+				 * absolute symlinks and symlinks with ".."
+				 * have to be deferred to prevent the archive
+				 * from bootstrapping itself to outside the
+				 * working directory.
+				 */
+				res = sltab_add_sym(nm, arcn->ln_name,
+				    arcn->sb.st_mode);
+				if (res == 0)
+					defer_pmode = 1;
+			}
 			break;
 		case PAX_CTG:
 		case PAX_HLK:
@@ -573,7 +593,7 @@ node_creat(ARCHD *arcn)
 	 */
 	if (!pmode || res)
 		arcn->sb.st_mode &= ~(SETBITS);
-	if (pmode)
+	if (pmode && !defer_pmode)
 		set_pmode(nm, arcn->sb.st_mode);
 
 	if (arcn->type == PAX_DIR && strcmp(NM_CPIO, argv0) != 0) {
@@ -584,43 +604,44 @@ node_creat(ARCHD *arcn)
 		 * rights. This allows nodes in the archive that are children
 		 * of this directory to be extracted without failure. Both time
 		 * and modes will be fixed after the entire archive is read and
-		 * before pax exits.
+		 * before pax exits.  To do that safely, we want the dev+ino
+		 * of the directory we created.
 		 */
-		if (access(nm, R_OK | W_OK | X_OK) < 0) {
-			if (lstat(nm, &sb) < 0) {
-				syswarn(0, errno,"Could not access %s (stat)",
-				    arcn->name);
-				set_pmode(nm,file_mode | S_IRWXU);
-			} else {
-				/*
-				 * We have to add rights to the dir, so we make
-				 * sure to restore the mode. The mode must be
-				 * restored AS CREATED and not as stored if
-				 * pmode is not set.
-				 */
-				set_pmode(nm,
-				    ((sb.st_mode & FILEBITS) | S_IRWXU));
-				if (!pmode)
-					arcn->sb.st_mode = sb.st_mode;
-			}
+		if (lstat(nm, &sb) < 0) {
+			syswarn(0, errno,"Could not access %s (stat)", nm);
+		} else if (access(nm, R_OK | W_OK | X_OK) < 0) {
+			/*
+			 * We have to add rights to the dir, so we make
+			 * sure to restore the mode. The mode must be
+			 * restored AS CREATED and not as stored if
+			 * pmode is not set.
+			 */
+			set_pmode(nm,
+			    ((sb.st_mode & FILEBITS) | S_IRWXU));
+			if (!pmode)
+				arcn->sb.st_mode = sb.st_mode;
 
 			/*
-			 * we have to force the mode to what was set here,
-			 * since we changed it from the default as created.
+			 * we have to force the mode to what was set
+			 * here, since we changed it from the default
+			 * as created.
 			 */
+			arcn->sb.st_dev = sb.st_dev;
+			arcn->sb.st_ino = sb.st_ino;
 			add_dir(nm, &(arcn->sb), 1);
-		} else if (pmode || patime || pmtime)
+		} else if (pmode || patime || pmtime) {
+			arcn->sb.st_dev = sb.st_dev;
+			arcn->sb.st_ino = sb.st_ino;
 			add_dir(nm, &(arcn->sb), 0);
-	}
-
-	if (patime || pmtime)
+		}
+	} else if (patime || pmtime)
 		set_ftime(nm, arcn->sb.st_mtime, arcn->sb.st_atime, 0);
 	return (0);
 }
 
 /*
  * unlnk_exist()
- *	Remove node from file system with the specified name. We pass the type
+ *	Remove node from filesystem with the specified name. We pass the type
  *	of the node that is going to replace it. When we try to create a
  *	directory and find that it already exists, we allow processing to
  *	continue as proper modes etc will always be set for it later on.
@@ -654,6 +675,7 @@ unlnk_exist(char *name, int type)
 			syswarn(1,errno,"Unable to remove directory %s", name);
 			return(-1);
 		}
+		delete_dir(sb.st_dev, sb.st_ino);
 		return(0);
 	}
 
@@ -669,13 +691,13 @@ unlnk_exist(char *name, int type)
 
 /*
  * chk_path()
- *	We were trying to create some kind of node in the file system and it
+ *	We were trying to create some kind of node in the filesystem and it
  *	failed. chk_path() makes sure the path up to the node exists and is
  *	writeable. When we have to create a directory that is missing along the
  *	path somewhere, the directory we create will be set to the same
  *	uid/gid as the file has (when uid and gid are being preserved).
  *	NOTE: this routine is a real performance loss. It is only used as a
- *	last resort when trying to create entries in the file system.
+ *	last resort when trying to create entries in the filesystem.
  * Return:
  *	-1 when it could find nothing it is allowed to fix.
  *	0 otherwise
@@ -685,13 +707,14 @@ int
 chk_path(char *name, uid_t st_uid, gid_t st_gid)
 {
 	char *spt = name;
+	char *next;
 	struct stat sb;
 	int retval = -1;
 
 	/*
 	 * watch out for paths with nodes stored directly in / (e.g. /bozo)
 	 */
-	if (*spt == '/')
+	while (*spt == '/')
 		++spt;
 
 	for (;;) {
@@ -701,19 +724,31 @@ chk_path(char *name, uid_t st_uid, gid_t st_gid)
 		spt = strchr(spt, '/');
 		if (spt == NULL)
 			break;
+
+		/*
+		 * skip over duplicate slashes; stop if there're only
+		 * trailing slashes left
+		 */
+		next = spt + 1;
+		while (*next == '/')
+			next++;
+		if (*next == '\0')
+			break;
+
 		*spt = '\0';
 
 		/*
 		 * if it exists we assume it is a directory, it is not within
 		 * the spec (at least it seems to read that way) to alter the
-		 * file system for nodes NOT EXPLICITLY stored on the archive.
+		 * filesystem for nodes NOT EXPLICITLY stored on the archive.
 		 * If that assumption is changed, you would test the node here
 		 * and figure out how to get rid of it (probably like some
 		 * recursive unlink()) or fix up the directory permissions if
 		 * required (do an access()).
 		 */
 		if (lstat(name, &sb) == 0) {
-			*(spt++) = '/';
+			*spt = '/';
+			spt = next;
 			continue;
 		}
 
@@ -747,7 +782,8 @@ chk_path(char *name, uid_t st_uid, gid_t st_gid)
 			set_pmode(name, ((sb.st_mode & FILEBITS) | S_IRWXU));
 			add_dir(name, &sb, 1);
 		}
-		*(spt++) = '/';
+		*spt = '/';
+		spt = next;
 		continue;
 	}
 	return(retval);
@@ -839,7 +875,7 @@ fset_ftime(char *fnm, int fd, time_t mtime, time_t atime, int frc)
 
 /*
  * set_ids()
- *	set the uid and gid of a file system node
+ *	set the uid and gid of a filesystem node
  * Return:
  *	0 when set, -1 on failure
  */
@@ -884,7 +920,7 @@ fset_ids(char *fnm, int fd, uid_t uid, gid_t gid)
 
 /*
  * set_lids()
- *	set the uid and gid of a file system node
+ *	set the uid and gid of a filesystem node
  * Return:
  *	0 when set, -1 on failure
  */
@@ -936,6 +972,71 @@ fset_pmode(char *fnm, int fd, mode_t mode)
 }
 
 /*
+ * set_attr()
+ *	Given a DIRDATA, restore the mode and times as indicated, but
+ *	only after verifying that it's the directory that we wanted.
+ */
+int
+set_attr(const struct file_times *ft, int force_times, mode_t mode,
+    int do_mode, int in_sig)
+{
+	struct stat sb;
+	int fd, r;
+
+	if (!do_mode && !force_times && !patime && !pmtime)
+		return (0);
+
+	/*
+	 * We could legitimately go through a symlink here,
+	 * so do *not* use O_NOFOLLOW.  The dev+ino check will
+	 * protect us from evil.
+	 */
+	fd = open(ft->ft_name, O_RDONLY
+#ifdef O_DIRECTORY
+	    | O_DIRECTORY
+#endif
+	    );
+	if (fd == -1) {
+		if (!in_sig)
+			syswarn(1, errno, "Unable to restore mode and times"
+			    " for directory: %s", ft->ft_name);
+		return (-1);
+	}
+
+	if (fstat(fd, &sb) == -1) {
+		if (!in_sig)
+			syswarn(1, errno, "Unable to stat directory: %s",
+			    ft->ft_name);
+		r = -1;
+#ifndef O_DIRECTORY
+	} else if (!S_ISDIR(sb.st_mode)) {
+		if (!in_sig)
+			syswarn(1, ENOTDIR, "Unable to restore mode and times"
+			    " for directory: %s", ft->ft_name);
+		r = -1;
+#endif
+	} else if (ft->ft_ino != sb.st_ino || ft->ft_dev != sb.st_dev) {
+		if (!in_sig)
+			paxwarn(1, "Directory vanished before restoring"
+			    " mode and times: %s", ft->ft_name);
+		r = -1;
+	} else {
+		/* Whew, it's a match!  Is there anything to change? */
+		if (do_mode && (mode & ABITS) != (sb.st_mode & ABITS))
+			fset_pmode(ft->ft_name, fd, mode);
+		if (((force_times || patime) && ft->ft_atime != sb.st_atime) ||
+		    ((force_times || pmtime) && ft->ft_mtime != sb.st_mtime))
+			fset_ftime(ft->ft_name, fd, ft->ft_mtime,
+			    ft->ft_atime, force_times);
+		r = 0;
+	}
+	close(fd);
+
+	return (r);
+}
+
+
+/*
  * file_write()
  *	Write/copy a file (during copy or archive extract). This routine knows
  *	how to copy files with lseek holes in it. (Which are read as file
@@ -950,7 +1051,7 @@ fset_pmode(char *fnm, int fd, mode_t mode)
  *	with holes. However, on extraction (or during copy, -rw) we have to
  *	deal with these files. Without detecting the holes, the files can
  *	consume a lot of file space if just written to disk. This replacement
- *	for write when passed the basic allocation size of a file system block,
+ *	for write when passed the basic allocation size of a filesystem block,
  *	uses lseek whenever it detects the input data is all 0 within that
  *	file block. In more detail, the strategy is as follows:
  *	While the input is all zero keep doing an lseek. Keep track of when we
@@ -970,11 +1071,11 @@ fset_pmode(char *fnm, int fd, mode_t mode)
  *	are not desired, just do a conditional test in those routines that
  *	call file_write() and have it call write() instead. BEFORE CLOSING THE
  *	FILE, make sure to call file_flush() when the last write finishes with
- *	an empty block. A lot of file systems will not create an lseek hole at
+ *	an empty block. A lot of filesystems will not create an lseek hole at
  *	the end. In this case we drop a single 0 at the end to force the
  *	trailing 0's in the file.
  *	---Parameters---
- *	rem: how many bytes left in this file system block
+ *	rem: how many bytes left in this filesystem block
  *	isempt: have we written to the file block yet (is it empty)
  *	sz: basic file block allocation size
  *	cnt: number of bytes on this write
@@ -999,7 +1100,7 @@ file_write(int fd, char *str, int cnt, int *rem, int *isempt, int sz,
 	while (cnt) {
 		if (!*rem) {
 			/*
-			 * We are now at the start of file system block again
+			 * We are now at the start of filesystem block again
 			 * (or what we think one is...). start looking for
 			 * empty blocks again
 			 */
@@ -1051,7 +1152,7 @@ file_write(int fd, char *str, int cnt, int *rem, int *isempt, int sz,
 		}
 
 		/*
-		 * have non-zero data in this file system block, have to write
+		 * have non-zero data in this filesystem block, have to write
 		 */
 		switch (fd) {
 		case -1:
@@ -1086,7 +1187,7 @@ file_write(int fd, char *str, int cnt, int *rem, int *isempt, int sz,
 
 /*
  * file_flush()
- *	when the last file block in a file is zero, many file systems will not
+ *	when the last file block in a file is zero, many filesystems will not
  *	let us create a hole at the end. To get the last block with zeros, we
  *	write the last BYTE with a zero (back up one byte and write a zero).
  */
@@ -1131,16 +1232,15 @@ rdfile_close(ARCHD *arcn, int *fd)
 	if (*fd < 0)
 		return;
 
-	(void)close(*fd);
-	*fd = -1;
-	if (!tflag)
-		return;
-
 	/*
 	 * user wants last access time reset
 	 */
-	set_ftime(arcn->org_name, arcn->sb.st_mtime, arcn->sb.st_atime, 1);
-	return;
+	if (tflag)
+		fset_ftime(arcn->org_name, *fd, arcn->sb.st_mtime,
+		    arcn->sb.st_atime, 1);
+
+	(void)close(*fd);
+	*fd = -1;
 }
 
 /*
